@@ -1,0 +1,35 @@
+# Dev environment runner for Claude Code + ECC agents.
+# Usage from a host project directory:
+#   PROJECT_DIR=$PWD docker compose -f /path/to/docker/docker-compose.yml run --rm claude
+#
+# Or use the wrapper script ./docker/claude-docker.sh which sets these for you.
+
+services:
+  claude:
+    image: ghcr.io/huynq2207/everything-claude-code:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: claude-dev
+    stdin_open: true
+    tty: true
+    working_dir: /workspace
+    environment:
+      # API key path (BYOK). Leave empty if using mounted OAuth credentials.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Forward user identity for git commits made inside the container.
+      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-}
+      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-}
+      - GIT_COMMITTER_NAME=${GIT_AUTHOR_NAME:-}
+      - GIT_COMMITTER_EMAIL=${GIT_AUTHOR_EMAIL:-}
+    volumes:
+      # The project the dev is working on.
+      - ${PROJECT_DIR:-./}:/workspace
+      # OAuth credential file (optional — only used when dev is on Team plan).
+      # Comment out if using API key only.
+      - ${HOME}/.claude/credentials.json:/root/.claude/credentials.json:ro
+      # SSH keys for git push/pull (read-only).
+      - ${HOME}/.ssh:/root/.ssh:ro
+      # Git identity / global hooks ignore.
+      - ${HOME}/.gitconfig:/root/.gitconfig:ro
+    command: bash
