@@ -1,0 +1,91 @@
+name: Auto Security Review
+
+# Two-layer security check on every PR:
+#   1. AgentShield deterministic scan  -> blocks merge if HIGH+ findings
+#   2. Claude security-reviewer agent  -> semantic review, advisory comment
+
+on:
+  pull_request:
+    branches: [main, staging]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: security-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  agentshield-gate:
+    name: AgentShield (blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '20.x'
+
+      - name: Run AgentShield scan
+        run: |
+          npx --yes ecc-agentshield@latest scan \
+            --path . \
+            --format markdown \
+            --min-severity high \
+            --output agentshield-report.md
+        continue-on-error: false
+
+      - name: Post scan summary to PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('agentshield-report.md')) return;
+            const body = '## AgentShield Scan\n\n' + fs.readFileSync('agentshield-report.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: body.slice(0, 65000)
+            });
+
+  claude-security-review:
+    name: Claude security-reviewer (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: []  # runs in parallel with agentshield-gate
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Claude security-reviewer agent
+        uses: anthropics/claude-code-action@v1
+        with:
+          api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          model: "claude-sonnet-4-6"
+          prompt: |
+            Use the `security-reviewer` agent to audit pull request #${{ github.event.pull_request.number }}.
+
+            Scope:
+            - Diff against `origin/${{ github.event.pull_request.base.ref }}`.
+            - Apply OWASP Top 10 checklist plus the AI Agent Platform extra checks
+              (prompt injection, data boundary, MCP server hardening, rate limit & cost).
+            - Pay extra attention to changes under:
+              src/auth/**, src/mcp/**, src/connectors/**, src/prompts/**, src/audit/**, config/permissions/**
+
+            Output:
+            - One PR review with verdict: APPROVE | REQUEST_CHANGES | COMMENT
+            - Findings table: file:line | severity | category | impact | remediation
+            - Only post HIGH and CRITICAL findings inline; consolidate MEDIUM into one comment.
+            - Mark the comment header `## Claude Security Review (advisory)` so reviewers know this is non-blocking.

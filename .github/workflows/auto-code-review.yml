@@ -1,0 +1,63 @@
+name: Auto Code Review
+
+# Comment-triggered code review using Claude Code agent.
+# Usage: post a comment "/review" on any PR to invoke the reviewer.
+
+on:
+  issue_comment:
+    types: [created]
+
+# Only listen for PR comments containing the /review trigger.
+permissions:
+  pull-requests: write
+  contents: read
+  issues: read
+
+concurrency:
+  group: code-review-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  code-review:
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '/review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Acknowledge trigger
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes'
+            });
+
+      - name: Checkout PR head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+          fetch-depth: 0
+
+      - name: Claude code-reviewer agent
+        uses: anthropics/claude-code-action@v1
+        with:
+          api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          model: "claude-sonnet-4-6"
+          prompt: |
+            Use the `code-reviewer` agent to review pull request #${{ github.event.issue.number }}.
+
+            Scope:
+            - Run `git diff origin/${{ github.event.repository.default_branch }}...HEAD`
+            - Apply the Pre-Report Gate and Confidence-Based Filtering rules in the agent definition.
+            - Only post findings rated HIGH or CRITICAL inline on the PR.
+            - Summarize MEDIUM findings in a single rolled-up comment.
+            - Skip stylistic preferences and false-positive patterns listed in the agent.
+
+            Output format:
+            - One PR review with verdict: APPROVE | REQUEST_CHANGES | COMMENT
+            - Findings table: file:line | severity | description | suggested fix
