@@ -6,7 +6,7 @@
 
 services:
   claude:
-    image: ghcr.io/huynq2207/everything-claude-code:latest
+    image: docker.weloyalty.net/devtools/everything-claude-code:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile

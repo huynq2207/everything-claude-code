@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-IMAGE="${IMAGE:-ghcr.io/huynq2207/everything-claude-code}"
+IMAGE="${IMAGE:-docker.weloyalty.net/devtools/everything-claude-code}"
 TAG="${TAG:-dev}"
 PUSH="${PUSH:-0}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"

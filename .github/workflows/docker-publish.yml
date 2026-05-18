@@ -1,13 +1,19 @@
-name: Docker Publish (multi-arch)
+name: Docker Publish (Harbor multi-arch)
 
-# Builds linux/amd64 + linux/arm64 image and pushes to GHCR.
+# Builds linux/amd64 + linux/arm64 image and pushes to internal Harbor.
+#
+# Registry:   docker.weloyalty.net
+# Project:    devtools
+# Repository: everything-claude-code
+#
+# Required repo secrets:
+#   HARBOR_USERNAME  - robot account name, e.g. robot$devtools+ci
+#   HARBOR_TOKEN     - robot account secret (generated in Harbor UI)
 #
 # Triggers:
 #   - push to main           -> tag :latest + :main
 #   - push tag v*            -> tag :v1.2.3 + :1.2 + :1
 #   - manual workflow_dispatch
-#
-# QEMU is used for arm64 emulation on the amd64 runner (no self-hosted ARM needed).
 
 on:
   push:
@@ -25,9 +31,13 @@ on:
       - '.github/workflows/docker-publish.yml'
   workflow_dispatch:
 
+env:
+  HARBOR_REGISTRY: docker.weloyalty.net
+  HARBOR_PROJECT: devtools
+  IMAGE_NAME: everything-claude-code
+
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: docker-publish-${{ github.ref }}
@@ -48,18 +58,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
+      - name: Log in to Harbor
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ env.HARBOR_REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_TOKEN }}
 
       - name: Compute image metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/everything-claude-code
+          images: ${{ env.HARBOR_REGISTRY }}/${{ env.HARBOR_PROJECT }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -81,3 +91,12 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: true
           sbom: true
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Pushed tags" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "Harbor UI: https://${{ env.HARBOR_REGISTRY }}/harbor/projects" >> "$GITHUB_STEP_SUMMARY"

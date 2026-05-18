@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-IMAGE="${ECC_IMAGE:-ghcr.io/huynq2207/everything-claude-code:latest}"
+IMAGE="${ECC_IMAGE:-docker.weloyalty.net/devtools/everything-claude-code:latest}"
 PROJECT_DIR="${PROJECT_DIR:-$PWD}"
 
 # Detect which credentials are available on the host.

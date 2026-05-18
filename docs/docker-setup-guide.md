@@ -32,11 +32,23 @@ docker compose version
 
 ---
 
-## 3. Pull image dựng sẵn
+## 3. Pull image dựng sẵn (từ Harbor nội bộ)
+
+Trước khi pull, login Harbor 1 lần (xem [section 8](#8-auto-publish-qua-github-actions-recommended) để tạo robot account):
 
 ```bash
-docker pull ghcr.io/huynq2207/everything-claude-code:latest
+docker login docker.weloyalty.net
+# Username: <your-harbor-username hoặc robot$devtools+cli>
+# Password: <password hoặc robot token>
 ```
+
+Sau đó pull:
+
+```bash
+docker pull docker.weloyalty.net/devtools/everything-claude-code:latest
+```
+
+> **Lưu ý**: Image ở **registry nội bộ** — phải đang trong VPN/mạng công ty mới pull được.
 
 Image kèm:
 - Node 20 + Claude Code CLI
@@ -46,7 +58,7 @@ Image kèm:
 Verify (in version các tool bên trong):
 
 ```bash
-docker run --rm ghcr.io/huynq2207/everything-claude-code:latest \
+docker run --rm docker.weloyalty.net/devtools/everything-claude-code:latest \
   bash -c "claude --version && git --version && gh --version | head -1"
 ```
 
@@ -57,10 +69,11 @@ docker run --rm ghcr.io/huynq2207/everything-claude-code:latest \
 ### 4A. Dùng wrapper script (đơn giản nhất)
 
 ```bash
-# Clone wrapper 1 lần
-curl -fsSL https://raw.githubusercontent.com/huynq2207/everything-claude-code/main/docker/claude-docker.sh \
-  -o /usr/local/bin/claude-docker
-chmod +x /usr/local/bin/claude-docker
+# Clone repo plugin 1 lần (chứa wrapper + Dockerfile)
+git clone git@github.com:huynq2207/everything-claude-code.git ~/ecc
+
+# Cài wrapper vào PATH
+sudo ln -sf ~/ecc/docker/claude-docker.sh /usr/local/bin/claude-docker
 
 # Đứng tại repo project của bạn
 cd <your-project>
@@ -86,7 +99,7 @@ docker run --rm -it \
   -v "$HOME/.ssh:/root/.ssh:ro" \
   -v "$HOME/.gitconfig:/root/.gitconfig:ro" \
   -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
-  ghcr.io/huynq2207/everything-claude-code:latest \
+  docker.weloyalty.net/devtools/everything-claude-code:latest \
   bash
 ```
 
@@ -176,7 +189,7 @@ Dùng wrapper:
 ./docker/build-multi-arch.sh
 
 # Build và push thẳng lên registry
-IMAGE=ghcr.io/huynq2207/everything-claude-code TAG=v1.0.0 PUSH=1 \
+IMAGE=docker.weloyalty.net/devtools/everything-claude-code TAG=v1.0.0 PUSH=1 \
   ./docker/build-multi-arch.sh
 ```
 
@@ -190,7 +203,7 @@ docker run --privileged --rm tonistiigi/binfmt --install all   # cross-arch emul
 # Build + push
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/huynq2207/everything-claude-code:latest \
+  -t docker.weloyalty.net/devtools/everything-claude-code:latest \
   -f docker/Dockerfile \
   --push .
 ```
@@ -198,7 +211,7 @@ docker buildx build \
 Verify manifest sau khi push:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/huynq2207/everything-claude-code:latest
+docker buildx imagetools inspect docker.weloyalty.net/devtools/everything-claude-code:latest
 # expected:
 #   Manifests:
 #     linux/amd64
@@ -211,35 +224,81 @@ Sau khi sửa agents/commands → rebuild để bake vào image.
 
 ## 8. Auto-publish qua GitHub Actions (Recommended)
 
-Repo đã có workflow [.github/workflows/docker-publish.yml](../.github/workflows/docker-publish.yml).
+Repo đã có workflow [.github/workflows/docker-publish.yml](../.github/workflows/docker-publish.yml) — build multi-arch (amd64 + arm64) + push lên Harbor nội bộ tự động.
 
 Trigger:
 - Push `main` → tag `:latest` + `:main`
 - Push tag `v*` (vd `v1.2.3`) → tag `:v1.2.3` + `:1.2` + `:1`
 - Manual `workflow_dispatch`
 
-Output: image multi-arch (amd64 + arm64) tự build qua QEMU + buildx, push lên GHCR.
+### 8A. Tạo Harbor project + robot account (1 lần — admin Harbor)
 
-Setup (1 lần):
+1. Vào https://docker.weloyalty.net → login.
+2. **Projects → + NEW PROJECT** → name `devtools` (hoặc đổi nếu muốn — cập nhật `HARBOR_PROJECT` trong workflow tương ứng), visibility: `Private`.
+3. Vào project `devtools` → **Robot Accounts → + NEW ROBOT ACCOUNT**:
+   - Name: `ci` (full name sẽ là `robot$devtools+ci`)
+   - Expires: chọn theo policy (90 days / never)
+   - Permissions: **Push** + **Pull** + **Tag** + **List artifact**
+4. **Copy secret** ngay sau khi tạo (chỉ hiện 1 lần).
 
-1. Cấp quyền packages cho GH Actions:
-   - Settings → Actions → General → Workflow permissions → "Read and write"
-2. Đảm bảo `GITHUB_TOKEN` có scope `packages: write` (workflow đã khai báo).
-3. Sau lần publish đầu tiên: Settings → Packages → `everything-claude-code` → Change visibility (Public / Internal).
+### 8B. Set GitHub repo secrets
 
-Tag release để build:
+```
+Settings → Secrets and variables → Actions → New repository secret
+```
+
+| Secret | Value |
+|---|---|
+| `HARBOR_USERNAME` | `robot$devtools+ci` |
+| `HARBOR_TOKEN` | `<secret copy từ Harbor>` |
+
+### 8C. Trigger build
 
 ```bash
 git tag v1.0.0
 git push origin v1.0.0
-# → workflow tự chạy, image có ở ghcr.io/huynq2207/everything-claude-code:v1.0.0
+# → workflow tự chạy
+# → image có ở docker.weloyalty.net/devtools/everything-claude-code:v1.0.0
 ```
 
-Push thủ công (nếu không dùng CI):
+Hoặc trigger manual:
+```
+GitHub → Actions → Docker Publish (Harbor multi-arch) → Run workflow
+```
+
+### 8D. Push thủ công (không qua CI)
 
 ```bash
-echo "$GHCR_PAT" | docker login ghcr.io -u huynq2207 --password-stdin
+# Login bằng robot account
+echo "$HARBOR_TOKEN" | docker login docker.weloyalty.net -u 'robot$devtools+ci' --password-stdin
+
+# Build + push multi-arch
 PUSH=1 TAG=latest ./docker/build-multi-arch.sh
+
+# Kết quả:
+# docker.weloyalty.net/devtools/everything-claude-code:latest (amd64 + arm64 manifest)
+```
+
+### 8E. Lưu ý Harbor TLS
+
+Nếu Harbor dùng CA nội bộ (không phải Let's Encrypt / public CA), dev cần:
+
+```bash
+# macOS: trust cert
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain \
+  /path/to/weloyalty-ca.crt
+
+# Linux:
+sudo cp weloyalty-ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates
+
+# Docker Desktop: Settings → Docker Engine, thêm:
+{ "insecure-registries": [] }  # KHÔNG dùng nếu Harbor có TLS hợp lệ
+```
+
+Verify cert hợp lệ:
+```bash
+curl -v https://docker.weloyalty.net/v2/ 2>&1 | grep -i "ssl\|certificate"
 ```
 
 ---
@@ -261,7 +320,7 @@ PUSH=1 TAG=latest ./docker/build-multi-arch.sh
 ## 10. Bảo mật
 
 - Image dùng `node:20-bookworm-slim` — base có CVE → cập nhật định kỳ
-- Chạy `docker scan ghcr.io/huynq2207/everything-claude-code:latest` weekly
+- Chạy `docker scan docker.weloyalty.net/devtools/everything-claude-code:latest` weekly
 - **Không** bake API key / credentials vào image (đã đảm bảo trong Dockerfile)
 - Mount mọi credential **read-only** (`:ro`)
 - Container chạy user `root` mặc định — OK cho dev tool, không khuyến nghị cho production workload

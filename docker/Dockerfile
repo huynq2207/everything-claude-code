@@ -66,7 +66,9 @@ WORKDIR /workspace
 # Show what's baked in when the image is first inspected.
 LABEL org.opencontainers.image.title="everything-claude-code-dev" \
       org.opencontainers.image.description="Claude Code CLI + ECC agents preinstalled" \
-      org.opencontainers.image.source="https://github.com/huynq2207/everything-claude-code"
+      org.opencontainers.image.source="https://github.com/huynq2207/everything-claude-code" \
+      org.opencontainers.image.vendor="weloyalty" \
+      org.opencontainers.image.url="https://docker.weloyalty.net/harbor/projects"
 
 # Interactive bash by default; override with `docker run ... claude /code-review`.
 CMD ["bash"]
