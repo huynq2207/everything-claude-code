@@ -148,7 +148,9 @@ Container ephemeral — exit là xoá. Project mount nên file edit vẫn lưu t
 
 ---
 
-## 7. Build image tại local (cho dev plugin)
+## 7. Build image tại local
+
+### 7A. Single-arch (chỉ kiến trúc máy host)
 
 ```bash
 cd <ecc-repo-root>
@@ -158,26 +160,87 @@ docker build -t ecc-dev:local -f docker/Dockerfile .
 docker run --rm -it ecc-dev:local claude --version
 ```
 
+Build ra image cho đúng kiến trúc của máy bạn (M1/M2/M3 → arm64, Intel/Linux server → amd64).
+
+### 7B. Multi-arch (amd64 + arm64) — dùng `buildx`
+
+Lý do cần multi-arch:
+- Mac Apple Silicon (M1/M2/M3/M4) chạy **arm64**
+- Linux servers / Windows / Intel Mac chạy **amd64**
+- Image single-arch sẽ chạy được nhưng qua emulation → chậm 3–10×
+
+Dùng wrapper:
+
+```bash
+# Build local (xuất OCI tar — verify multi-arch không lỗi)
+./docker/build-multi-arch.sh
+
+# Build và push thẳng lên registry
+IMAGE=ghcr.io/huynq2207/everything-claude-code TAG=v1.0.0 PUSH=1 \
+  ./docker/build-multi-arch.sh
+```
+
+Thủ công bằng buildx:
+
+```bash
+# Setup builder 1 lần
+docker buildx create --name ecc-builder --use --bootstrap
+docker run --privileged --rm tonistiigi/binfmt --install all   # cross-arch emulation
+
+# Build + push
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/huynq2207/everything-claude-code:latest \
+  -f docker/Dockerfile \
+  --push .
+```
+
+Verify manifest sau khi push:
+
+```bash
+docker buildx imagetools inspect ghcr.io/huynq2207/everything-claude-code:latest
+# expected:
+#   Manifests:
+#     linux/amd64
+#     linux/arm64
+```
+
 Sau khi sửa agents/commands → rebuild để bake vào image.
 
 ---
 
-## 8. Đẩy image lên GitHub Container Registry (admin/maintainer)
+## 8. Auto-publish qua GitHub Actions (Recommended)
+
+Repo đã có workflow [.github/workflows/docker-publish.yml](../.github/workflows/docker-publish.yml).
+
+Trigger:
+- Push `main` → tag `:latest` + `:main`
+- Push tag `v*` (vd `v1.2.3`) → tag `:v1.2.3` + `:1.2` + `:1`
+- Manual `workflow_dispatch`
+
+Output: image multi-arch (amd64 + arm64) tự build qua QEMU + buildx, push lên GHCR.
+
+Setup (1 lần):
+
+1. Cấp quyền packages cho GH Actions:
+   - Settings → Actions → General → Workflow permissions → "Read and write"
+2. Đảm bảo `GITHUB_TOKEN` có scope `packages: write` (workflow đã khai báo).
+3. Sau lần publish đầu tiên: Settings → Packages → `everything-claude-code` → Change visibility (Public / Internal).
+
+Tag release để build:
 
 ```bash
-# Login
-echo "$GHCR_PAT" | docker login ghcr.io -u huynq2207 --password-stdin
-
-# Tag & push
-docker tag ecc-dev:local ghcr.io/huynq2207/everything-claude-code:latest
-docker push ghcr.io/huynq2207/everything-claude-code:latest
-
-# Tagged release
-docker tag ecc-dev:local ghcr.io/huynq2207/everything-claude-code:v1.0.0
-docker push ghcr.io/huynq2207/everything-claude-code:v1.0.0
+git tag v1.0.0
+git push origin v1.0.0
+# → workflow tự chạy, image có ở ghcr.io/huynq2207/everything-claude-code:v1.0.0
 ```
 
-Khuyến nghị: thêm GitHub Action `docker-publish.yml` để CI auto-build & push khi tag release.
+Push thủ công (nếu không dùng CI):
+
+```bash
+echo "$GHCR_PAT" | docker login ghcr.io -u huynq2207 --password-stdin
+PUSH=1 TAG=latest ./docker/build-multi-arch.sh
+```
 
 ---
 
@@ -218,5 +281,5 @@ Khuyến nghị: thêm GitHub Action `docker-publish.yml` để CI auto-build & 
 
 - Team có GitHub Container Registry quota chưa? Hay dùng Docker Hub / private registry nội bộ?
 - Image base có cần đổi sang `distroless` / `alpine` để giảm CVE surface không?
-- Có cần multi-arch (amd64 + arm64) không? (Mac M1/M2/M3 cần arm64)
-- Workflow auto-build & push image khi merge `main` có cần dựng không?
+- Cần thêm `linux/arm64/v8` riêng cho Raspberry Pi / ARM servers ngoài `linux/arm64` không?
+- Có nên build thêm Windows container image không? (hiện chỉ build linux/*)
